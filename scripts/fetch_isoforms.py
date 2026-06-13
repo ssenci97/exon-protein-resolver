@@ -673,7 +673,7 @@ Output:
 
     parser.add_argument(
         "--no-protein-validation",
-        action="store_true",
+        action="store_false",
         help="Skip retrieval of Ensembl protein sequences for validation.",
     )
 
