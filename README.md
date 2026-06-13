@@ -5,7 +5,7 @@
 
 ## What this tool does
 
-`src/fetch_isoforms_hs.py` queries the [Ensembl REST API](https://rest.ensembl.org) and builds a flat, denormalized table where **each row is one exon instance in one transcript**. It calculates the reading frame at every splice junction and extracts the exact amino acid sub-sequence contributed by each exon, including the "junctional" C-terminal residue split across the intron boundary.
+`src/exon_protein_resolver/fetch_isoforms_hs.py` queries the [Ensembl REST API](https://rest.ensembl.org) and builds a flat, denormalized table where **each row is one exon instance in one transcript**. It calculates the reading frame at every splice junction and extracts the exact amino acid sub-sequence contributed by each exon, including the "junctional" C-terminal residue split across the intron boundary.
 
 This is useful for:
 - **Splice-aware variant interpretation** — map a genomic variant to its affected exon and protein residue
@@ -21,13 +21,13 @@ Requires Python 3.8+ and `requests`, `pandas`.
 pip install requests pandas
 
 # Single gene
-python src/fetch_isoforms_hs.py --genes ENSG00000141510 --output-dir out/
+python src/exon_protein_resolver/fetch_isoforms_hs.py --genes ENSG00000141510 --output-dir out/
 
 # Multiple genes
-python src/fetch_isoforms_hs.py --genes ENSG00000141510,ENSG00000139618 --output-dir out/
+python src/exon_protein_resolver/fetch_isoforms_hs.py --genes ENSG00000141510,ENSG00000139618 --output-dir out/
 
 # Batch mode from file (one Ensembl gene ID per line)
-python src/fetch_isoforms_hs.py --input-file genes.txt --output-dir out/
+python src/exon_protein_resolver/fetch_isoforms_hs.py --input-file genes.txt --output-dir out/
 ```
 
 ## Output format: Exon-Resolved Protein Mapping Table (ERPM)
