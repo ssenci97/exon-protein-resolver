@@ -2,45 +2,14 @@
 """
 Fetch exon and isoform-level information for one or more Ensembl human genes.
 
-This script retrieves, for each transcript of each input gene:
-- exon IDs and genomic coordinates
-- exon nucleotide sequences
-- CDS-relative exon coordinates
-- amino acids encoded by complete codons fully contained inside each exon
-- C-terminal junctional amino acid when an exon ends in a split codon
-- transcript, translation, and gene metadata
-
-Important biological note:
-`exon_protein_sequence` contains only amino acids encoded by complete codons fully
-contained within that exon. Amino acids created by split codons across exon junctions
-are not assigned as normal exon-internal amino acids. The C-terminal split-codon amino
-acid, when present, is reported in `junctional_Cterm`.
-
-Input methods:
-1. Command-line gene IDs:
-   python scripts/fetch_isoforms.py --genes ENSG00000141510 --output-dir data/human_gene_exons
-
-2. Command-line comma-separated gene IDs:
-   python scripts/fetch_isoforms.py --genes ENSG00000141510,ENSG00000139618 --output-dir data/human_gene_exons
-
-3. Input file with one Ensembl gene ID per line:
-   python scripts/fetch_isoforms.py --input-file genes.txt --output-dir data/human_gene_exons
-
-Lines starting with "#" and empty lines are ignored in input files.
-
-Output:
-One TSV file is created per gene:
-   data/human_gene_exons/ENSG00000141510_exons.tsv
-
 Examples:
-   python scripts/fetch_isoforms.py --genes ENSG00000141510 --output-dir data/human_gene_exons
-   python scripts/fetch_isoforms.py --genes ENSG00000141510,ENSG00000139618 --output-dir data/human_gene_exons
-   python scripts/fetch_isoforms.py --input-file genes.txt --output-dir data/human_gene_exons
-   python scripts/fetch_isoforms.py --input-file genes.txt --output-dir data/human_gene_exons --verbose
-   python scripts/fetch_isoforms.py --genes ENSG00000141510 --output-dir data/human_gene_exons --no-protein-validation
+  python scripts/fetch_isoforms.py --genes ENSG00000141510 --output-dir data/human_gene_exons
+  python scripts/fetch_isoforms.py --genes ENSG00000141510,ENSG00000139618 --output-dir data/human_gene_exons
+  python scripts/fetch_isoforms.py --input-file genes.txt --output-dir data/human_gene_exons
+  python scripts/fetch_isoforms.py --genes ENSG00000141510 --output-dir out --no-protein-validation
+  python scripts/fetch_isoforms.py --genes ENSG00000141510 --output-dir out --reverse-complement-negative-strand
 
-Requirements:
-   pip install requests pandas
+Requirements: pip install requests pandas
 """
 
 import argparse
@@ -121,6 +90,111 @@ class CustomArgumentParser(argparse.ArgumentParser):
         self.exit(2)
 
 
+def parse_gene_ids_from_text(text: str) -> List[str]:
+    return [item.strip() for item in re.split(r"[,\s]+", text.strip()) if item.strip()]
+
+
+def read_gene_ids_from_file(path: Path) -> List[str]:
+    gene_ids = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            clean_line = line.strip()
+            if not clean_line or clean_line.startswith("#"):
+                continue
+            gene_ids.extend(parse_gene_ids_from_text(clean_line))
+    return gene_ids
+
+
+def unique_preserving_order(items: List[str]) -> List[str]:
+    seen = set()
+    return [item for item in items if not (item in seen or seen.add(item))]
+
+
+def validate_gene_ids(gene_ids: List[str]) -> List[str]:
+    invalid = [gid for gid in gene_ids if not re.fullmatch(r"ENSG[0-9]+(?:\.[0-9]+)?", gid)]
+    if invalid:
+        raise ValueError(
+            f"Invalid Ensembl gene ID format: {', '.join(invalid)}. "
+            "Expected IDs like ENSG00000141510."
+        )
+    return gene_ids
+
+
+def parse_args() -> argparse.Namespace:
+    parser = CustomArgumentParser(
+        description="Fetch exon and isoform-level information for Ensembl human genes.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Input:
+  Use exactly one of:
+    --genes       One Ensembl gene ID or a comma-separated list
+    --input-file  Text file with one Ensembl gene ID per line
+
+Output:
+  --output-dir is required. One TSV file is written per gene.
+        """,
+    )
+
+    if len(sys.argv) == 1:
+        parser.print_help(sys.stderr)
+        parser.exit(2)
+
+    input_group = parser.add_mutually_exclusive_group(required=True)
+    input_group.add_argument(
+        "--genes",
+        help="Comma-separated Ensembl gene IDs, e.g. ENSG00000141510,ENSG00000139618.",
+    )
+    input_group.add_argument(
+        "--input-file",
+        type=Path,
+        help="Text file containing one Ensembl gene ID per line.",
+    )
+
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        required=True,
+        help="Directory where one TSV file per gene will be written.",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Print the first rows of each output dataframe to stderr.",
+    )
+    parser.add_argument(
+        "--reverse-complement-negative-strand",
+        action="store_true",
+        help="Reverse-complement exon sequences on negative-strand exons.",
+    )
+    parser.add_argument(
+        "--no-protein-validation",
+        action="store_false",
+        help="Skip retrieval of Ensembl protein sequences for validation.",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite existing output files.",
+    )
+
+    return parser.parse_args()
+
+
+def get_gene_ids_from_args(args: argparse.Namespace) -> List[str]:
+    if args.input_file:
+        if not args.input_file.exists():
+            raise FileNotFoundError(f"Input file does not exist: {args.input_file}")
+        gene_ids = read_gene_ids_from_file(args.input_file)
+    else:
+        gene_ids = parse_gene_ids_from_text(args.genes)
+
+    gene_ids = unique_preserving_order(gene_ids)
+    if not gene_ids:
+        raise ValueError("No gene IDs were provided. Use --genes or --input-file.")
+    return validate_gene_ids(gene_ids)
+
+
 class EnsemblExonExtractor:
     def __init__(
         self,
@@ -133,6 +207,25 @@ class EnsemblExonExtractor:
         self.validate_protein = validate_protein
         self.session = requests.Session()
 
+    @staticmethod
+    def reverse_complement(seq: str) -> str:
+        complement = str.maketrans("ACGTNacgtn", "TGCANtgcan")
+        return seq.translate(complement)[::-1]
+
+    @staticmethod
+    def translate_sequence(seq: str) -> str:
+        protein = []
+        for i in range(0, len(seq) - 2, 3):
+            codon = seq[i:i + 3].upper()
+            protein.append(CODON_TABLE.get(codon, "X"))
+        return "".join(protein)
+
+    @staticmethod
+    def _exon_sort_key_for_transcript(exon: Dict[str, Any], strand: int) -> int:
+        if strand == 1:
+            return int(exon["start"])
+        return -int(exon["end"])
+
     def _make_request(
         self,
         endpoint: str,
@@ -140,7 +233,6 @@ class EnsemblExonExtractor:
         json_data: Optional[Dict[str, Any]] = None,
     ) -> Optional[Any]:
         url = f"{BASE_URL}{endpoint}"
-
         for attempt in range(MAX_RETRIES):
             try:
                 if method.upper() == "POST":
@@ -185,17 +277,14 @@ class EnsemblExonExtractor:
                     time.sleep(2**attempt)
                 else:
                     return None
-
         return None
 
     def get_sequences_batch(self, ids: List[str], seq_type: str) -> Dict[str, str]:
         unique_ids = sorted(set(ids))
-
         if not unique_ids:
             return {}
 
         all_results: Dict[str, str] = {}
-
         for i in range(0, len(unique_ids), BATCH_SIZE):
             batch = unique_ids[i:i + BATCH_SIZE]
             payload = {"ids": batch, "type": seq_type}
@@ -206,15 +295,9 @@ class EnsemblExonExtractor:
                 file=sys.stderr,
             )
 
-            data = self._make_request(
-                "/sequence/id",
-                method="POST",
-                json_data=payload,
-            )
-
+            data = self._make_request("/sequence/id", method="POST", json_data=payload)
             if not data:
                 continue
-
             if isinstance(data, dict):
                 data = [data]
 
@@ -229,37 +312,13 @@ class EnsemblExonExtractor:
 
         return all_results
 
-    @staticmethod
-    def reverse_complement(seq: str) -> str:
-        complement = str.maketrans("ACGTNacgtn", "TGCANtgcan")
-        return seq.translate(complement)[::-1]
-
-    @staticmethod
-    def translate_sequence(seq: str) -> str:
-        protein = []
-
-        for i in range(0, len(seq) - 2, 3):
-            codon = seq[i:i + 3].upper()
-            protein.append(CODON_TABLE.get(codon, "X"))
-
-        return "".join(protein)
-
     def get_gene_info(self) -> Dict[str, Any]:
         data = self._make_request(f"/lookup/id/{self.gene_id}?expand=1")
-
         if not data:
             raise ValueError(
                 f"Gene {self.gene_id} was not found, or Ensembl REST returned an error."
             )
-
         return data
-
-    @staticmethod
-    def _exon_sort_key_for_transcript(exon: Dict[str, Any], strand: int) -> int:
-        if strand == 1:
-            return int(exon["start"])
-
-        return -int(exon["end"])
 
     def calculate_exon_cds_coords(
         self,
@@ -272,7 +331,6 @@ class EnsemblExonExtractor:
 
         cds_start_genomic = translation.get("start")
         cds_end_genomic = translation.get("end")
-
         if cds_start_genomic is None or cds_end_genomic is None:
             return [(0, 0, -1, -1, False)] * len(exons)
 
@@ -292,7 +350,6 @@ class EnsemblExonExtractor:
             overlaps_cds = not (
                 exon_end < cds_start_genomic or exon_start > cds_end_genomic
             )
-
             if not overlaps_cds:
                 coords_by_exon_id[exon_id] = (0, 0, -1, -1, False)
                 continue
@@ -311,7 +368,6 @@ class EnsemblExonExtractor:
                 cds_end_pos % 3,
                 True,
             )
-
             cds_position += coding_length
 
         return [
@@ -332,10 +388,8 @@ class EnsemblExonExtractor:
 
         for transcript in transcripts:
             translation = transcript.get("Translation")
-
             if translation:
                 coding_transcript_ids.append(transcript["id"])
-
                 translation_id = translation.get("id")
                 if translation_id:
                     translation_ids.append(translation_id)
@@ -362,7 +416,6 @@ class EnsemblExonExtractor:
         cds_sequences = self.get_sequences_batch(coding_transcript_ids, "cds")
 
         protein_sequences: Dict[str, str] = {}
-
         if self.validate_protein and translation_ids:
             print(
                 f"\nDownloading {len(translation_ids)} protein sequences for validation...",
@@ -431,7 +484,6 @@ class EnsemblExonExtractor:
                 strand = int(exon.get("strand", transcript_strand))
 
                 exon_seq = exon_sequences.get(exon_id, "")
-
                 if (
                     self.reverse_complement_negative_strand
                     and strand == -1
@@ -541,166 +593,13 @@ class EnsemblExonExtractor:
 
     def create_dataframe(self) -> pd.DataFrame:
         exon_data = self.fetch_exon_data()
-
         if not exon_data:
             raise ValueError("No exon data were retrieved for the specified gene.")
 
         df = pd.DataFrame(exon_data)
         extra_cols = [col for col in df.columns if col not in OUTPUT_COLUMNS]
         final_columns = [col for col in OUTPUT_COLUMNS + extra_cols if col in df.columns]
-
         return df[final_columns]
-
-
-def parse_gene_ids_from_text(text: str) -> List[str]:
-    gene_ids = []
-
-    for item in re.split(r"[,\s]+", text.strip()):
-        item = item.strip()
-        if item:
-            gene_ids.append(item)
-
-    return gene_ids
-
-
-def read_gene_ids_from_file(path: Path) -> List[str]:
-    gene_ids = []
-
-    with path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            clean_line = line.strip()
-
-            if not clean_line or clean_line.startswith("#"):
-                continue
-
-            gene_ids.extend(parse_gene_ids_from_text(clean_line))
-
-    return gene_ids
-
-
-def unique_preserving_order(items: List[str]) -> List[str]:
-    seen = set()
-    unique_items = []
-
-    for item in items:
-        if item not in seen:
-            seen.add(item)
-            unique_items.append(item)
-
-    return unique_items
-
-
-def validate_gene_ids(gene_ids: List[str]) -> List[str]:
-    invalid_ids = [
-        gene_id
-        for gene_id in gene_ids
-        if not re.fullmatch(r"ENSG[0-9]+(?:\.[0-9]+)?", gene_id)
-    ]
-
-    if invalid_ids:
-        raise ValueError(
-            "Invalid Ensembl gene ID format: "
-            + ", ".join(invalid_ids)
-            + ". Expected IDs like ENSG00000141510."
-        )
-
-    return gene_ids
-
-
-def parse_args() -> argparse.Namespace:
-    parser = CustomArgumentParser(
-        description="Fetch exon and isoform-level information for Ensembl human genes.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  python scripts/fetch_isoforms.py --genes ENSG00000141510 --output-dir data/human_gene_exons
-  python scripts/fetch_isoforms.py --genes ENSG00000141510,ENSG00000139618 --output-dir data/human_gene_exons
-  python scripts/fetch_isoforms.py --input-file genes.txt --output-dir data/human_gene_exons
-
-Input:
-  Use exactly one of:
-    --genes       One Ensembl gene ID or a comma-separated list
-    --input-file  Text file with one Ensembl gene ID per line
-
-Output:
-  --output-dir is required.
-  One TSV file is written per gene.
-        """,
-    )
-
-    if len(sys.argv) == 1:
-        parser.print_help(sys.stderr)
-        parser.exit(2)
-
-    input_group = parser.add_mutually_exclusive_group(required=True)
-
-    input_group.add_argument(
-        "--genes",
-        help=(
-            "One Ensembl gene ID or a comma-separated list of Ensembl gene IDs, "
-            "for example ENSG00000141510,ENSG00000139618."
-        ),
-    )
-
-    input_group.add_argument(
-        "--input-file",
-        type=Path,
-        help="Text file containing one Ensembl gene ID per line.",
-    )
-
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        required=True,
-        help="Directory where one TSV file per gene will be written.",
-    )
-
-    parser.add_argument(
-        "-v",
-        "--verbose",
-        action="store_true",
-        help="Print the first rows of each output dataframe to stderr.",
-    )
-
-    parser.add_argument(
-        "--reverse-complement-negative-strand",
-        action="store_true",
-        help=(
-            "Reverse-complement exon sequences on negative-strand exons. "
-            "Disabled by default."
-        ),
-    )
-
-    parser.add_argument(
-        "--no-protein-validation",
-        action="store_false",
-        help="Skip retrieval of Ensembl protein sequences for validation.",
-    )
-
-    parser.add_argument(
-        "--overwrite",
-        action="store_true",
-        help="Overwrite existing output files.",
-    )
-
-    return parser.parse_args()
-
-
-def get_gene_ids_from_args(args: argparse.Namespace) -> List[str]:
-    if args.input_file:
-        if not args.input_file.exists():
-            raise FileNotFoundError(f"Input file does not exist: {args.input_file}")
-
-        gene_ids = read_gene_ids_from_file(args.input_file)
-    else:
-        gene_ids = parse_gene_ids_from_text(args.genes)
-
-    gene_ids = unique_preserving_order(gene_ids)
-
-    if not gene_ids:
-        raise ValueError("No gene IDs were provided. Use --genes or --input-file.")
-
-    return validate_gene_ids(gene_ids)
 
 
 def write_gene_output(
@@ -789,6 +688,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
-
 
