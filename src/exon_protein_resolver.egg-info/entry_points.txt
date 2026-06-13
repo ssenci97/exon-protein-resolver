@@ -1,2 +1,0 @@
-[console_scripts]
-fetch-exons = exon_protein_resolver.fetch_isoforms_hs:main
