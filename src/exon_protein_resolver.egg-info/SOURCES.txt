@@ -1,0 +1,10 @@
+README.md
+pyproject.toml
+src/exon_protein_resolver/__init__.py
+src/exon_protein_resolver/fetch_isoforms_hs.py
+src/exon_protein_resolver.egg-info/PKG-INFO
+src/exon_protein_resolver.egg-info/SOURCES.txt
+src/exon_protein_resolver.egg-info/dependency_links.txt
+src/exon_protein_resolver.egg-info/entry_points.txt
+src/exon_protein_resolver.egg-info/requires.txt
+src/exon_protein_resolver.egg-info/top_level.txt
